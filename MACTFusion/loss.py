@@ -16,7 +16,7 @@ class Fusionloss(nn.Module):
         super(Fusionloss, self).__init__()
         self.sobelconv=Sobelxy()
 
-    def forward(self,image_vis,image_ir,labels,generate_img,i):
+    def forward(self,image_vis,image_ir,generate_img, num, labels):
         image_y=image_vis[:,:1,:,:]
         x_in_max=torch.max(image_y,image_ir)
         wb0 = 0.5

@@ -116,12 +116,10 @@ def train_fusion(num=0, logger=None):
             fusion_image = torch.where(fusion_image < zeros, zeros, fusion_image)
             optimizer.zero_grad()
 
-            loss_fusion,  loss_in, ssim_loss, loss_grad= criteria_fusion(
+            loss_fusion, loss_in, ssim_loss, loss_grad= criteria_fusion(
                 image_vis=image_vis_ycrcb, image_ir=image_ir, generate_img=
                 logits, i=num, labels=None
             )
-
-
 
             loss_total = loss_fusion
             loss_total.backward()
