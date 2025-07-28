@@ -1,1 +1,10 @@
 dataset/
+
+MACTFusion/logs/
+MACTFusion/*.yaml
+MACTFusion/config_loader.py
+MACTFusion/*_with_config.py
+MACTFusion/README_config.md
+MACTFusion/models
+
+**/__pycache__/
