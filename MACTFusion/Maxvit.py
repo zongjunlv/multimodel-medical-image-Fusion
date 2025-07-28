@@ -392,8 +392,6 @@ class MaxViTBlock(nn.Module):
         )
 
 
-
-
         # Init Block and Grid Transformer
         self.block_transformer = MaxViTTransformerBlock(
             in_channels=out_channels,
@@ -437,7 +435,6 @@ class MaxViTBlock(nn.Module):
         x_block_cross = self.block_transformer(x_)
         x_grid_cross = self.grid_transformer(x_block_cross)
         output = x_grid_cross
-
 
         return output
 

@@ -16,7 +16,14 @@ from timm.models.efficientnet_blocks import SqueezeExcite, DepthwiseSeparableCon
 from timm.models.layers import drop_path, trunc_normal_, Mlp, DropPath
 
 
-
+# 空间注意力机制
+'''
+SimAM是一种轻量级的空间注意力机制,不需要额外的参数。它通过计算特征的空间方差来生成注意力权重。
+用途：
+1.增强重要区域的特征表示
+2.提高模型对空间信息的敏感度
+3.在卷积操作后自适应地调整特征权重
+'''
 class SimAM(torch.nn.Module):
     def __init__(self, e_lambda=1e-4):
         super(SimAM, self).__init__()
@@ -47,7 +54,17 @@ def _gelu_ignore_parameters(
     return activation
 
 
-
+# 移动端卷积块（类似MBConv）
+'''
+基于MobileNet的MBConv块设计,采用深度可分离卷积结构:
+主路径：标准化 → 深度可分离卷积 → SimAM注意力 → 1x1卷积
+跳跃连接：处理残差连接，下采样时使用最大池化
+用途：
+1.提取局部特征
+2.减少计算复杂度
+3.支持空间下采样
+4.增强特征表示能力
+'''
 class MAConv(nn.Module):
     """ MBConv block as described in: https://arxiv.org/pdf/2204.01697.pdf.
 
@@ -124,7 +141,14 @@ class MAConv(nn.Module):
         output = output + self.skip_path(input)
         return output
 
-
+# 窗口分割
+'''
+原理：将输入特征图按固定窗口大小分割成多个不重叠的窗口块。
+用途：
+1.为窗口级自注意力准备输入
+2.减少自注意力的计算复杂度
+3.实现局部特征建模
+'''
 def window_partition(
         input: torch.Tensor,
         window_size: Tuple[int, int] = (8, 8)
@@ -146,7 +170,13 @@ def window_partition(
     windows = windows.permute(0, 2, 4, 3, 5, 1).contiguous().view(-1, window_size[0], window_size[1], C)
     return windows
 
-
+# 窗口恢复
+'''
+原理：将分割后的窗口块恢复为原始特征图尺寸。
+用途：
+1.重构完整的特征图
+2.保持特征图的空间连续性
+'''
 def window_reverse(
         windows: torch.Tensor,
         original_size: Tuple[int, int],
@@ -171,7 +201,14 @@ def window_reverse(
     output = output.permute(0, 5, 1, 3, 2, 4).contiguous().view(B, -1, H, W)
     return output
 
-
+# 网格分割
+'''
+原理：将输入特征图按网格模式分割，每个网格包含分布在整个特征图上的像素。
+用途：
+1.为网格级自注意力准备输入
+2.实现全局特征建模
+3.捕获长距离依赖关系
+'''
 def grid_partition(
         input: torch.Tensor,
         grid_size: Tuple[int, int] = (8,8)
@@ -193,7 +230,10 @@ def grid_partition(
     grid = grid.permute(0, 3, 5, 2, 4, 1).contiguous().view(-1, grid_size[0], grid_size[1], C)
     return grid
 
-
+# 网格恢复
+'''
+原理：将网格分割后的特征恢复为原始空间布局。
+'''
 def grid_reverse(
         grid: torch.Tensor,
         original_size: Tuple[int, int],
@@ -218,7 +258,7 @@ def grid_reverse(
     output = output.permute(0, 5, 3, 1, 4, 2).contiguous().view(B, C, H, W)
     return output
 
-
+# 获取相对位置索引
 def get_relative_position_index(
         win_h: int,
         win_w: int
@@ -233,16 +273,31 @@ def get_relative_position_index(
     Returns:
         relative_coords (torch.Tensor): Pair-wise relative position indexes [height * width, height * width].
     """
+    # 利用torch.arange和torch.meshgrid函数生成对应的坐标，[2,H,W]。
     coords = torch.stack(torch.meshgrid([torch.arange(win_h), torch.arange(win_w)]))
+    # 然后堆叠起来，展开为一个二维向量，得到的是绝对位置索引。
     coords_flatten = torch.flatten(coords, 1)
+    # 广播机制，分别在第一维，第二维，插入一个维度，进行广播相减，得到 2, wh*ww, wh*ww的张量
     relative_coords = coords_flatten[:, :, None] - coords_flatten[:, None, :]
     relative_coords = relative_coords.permute(1, 2, 0).contiguous()
     relative_coords[:, :, 0] += win_h - 1
     relative_coords[:, :, 1] += win_w - 1
+    # 做了个乘法操作，以进行区分关于y=x对称的两个向量
     relative_coords[:, :, 0] *= 2 * win_w - 1
     return relative_coords.sum(-1)
 
-
+# 相对自注意力
+'''
+原理：
+1.实现跨模态注意力机制
+2.查询Q来自第一种模态如CT图像
+3.键K和值V来自第二种模态如MRI图像
+4.融合相对位置编码，增强位置感知能力
+用途：
+1.实现跨模态特征融合
+2.建立两种模态之间的关联
+3.增强模型对位置信息的理解
+'''
 class RelativeSelfAttention(nn.Module):
     """ Relative Self-Attention similar to Swin V1. Implementation inspired by Timms Swin V1 implementation.
 
@@ -278,15 +333,16 @@ class RelativeSelfAttention(nn.Module):
         self.proj = nn.Linear(in_features=in_channels, out_features=in_channels, bias=True)
         self.proj_drop = nn.Dropout(p=drop)
         self.softmax = nn.Softmax(dim=-1)
-        # Define a parameter table of relative position bias, shape: 2*Wh-1 * 2*Ww-1, nH
+        # 初始化相对位置索引矩阵[2*H-1,2*W-1,num_heads]。
         self.relative_position_bias_table = nn.Parameter(
             torch.zeros((2 * grid_window_size[0] - 1) * (2 * grid_window_size[1] - 1), num_heads))
 
-        # Get pair-wise relative position index for each token inside the window
+        # 得到视窗内每个token的成对相对位置索引
         self.register_buffer("relative_position_index", get_relative_position_index(grid_window_size[0],
                                                                                     grid_window_size[1]))
-        # Init relative positional bias
+        # 初始化相对位置偏置
         trunc_normal_(self.relative_position_bias_table, std=.02)
+        # 注：相对位置索引是固定的，相对位置偏置参数是学出的，需要根据相对位置索引去取出相对位置偏置参数的数据
 
     def _get_relative_positional_bias(
             self
@@ -305,6 +361,8 @@ class RelativeSelfAttention(nn.Module):
             self,
             input: torch.Tensor,
             input_fu: torch.Tensor
+            # input: 第一种模态（如CT图像）
+            # input_fu: 第二种模态（如MRI图像）
     ) -> torch.Tensor:
         """ Forward pass.
 
@@ -316,8 +374,9 @@ class RelativeSelfAttention(nn.Module):
         """
         # Get shape of input
         B_, N, C = input.shape
-        q = self.q(input)
+        q = self.q(input)       # 查询来自第一种模态
         q = q.reshape(B_, N, 1, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        # 键值来自第二种模态
         kv = self.kv(input_fu).reshape(B_, N, 2, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = q[0], kv[0], kv[1]  # make torchscript happy (cannot use tensor as tuple)
 
@@ -331,7 +390,17 @@ class RelativeSelfAttention(nn.Module):
         output = self.proj_drop(output)
         return output
 
-
+# block 和 grid 注意力块
+'''
+原理：
+1.结合层归一化、跨模态注意力和多层感知机
+2.采用残差连接和dropout防止过拟合
+3.支持窗口分割和网格分割两种分割方式
+用途：
+1.实现深层特征变换
+2.融合来自不同模态的信息
+3.增强特征表示能力
+'''
 class MaxViTTransformerBlock(nn.Module):
     """ MaxViT Transformer block.
 
@@ -347,17 +416,17 @@ class MaxViTTransformerBlock(nn.Module):
         Grid/window reverse (Unblock/Ungrid) is performed on the final output for the same reason.
 
     Args:
-        in_channels (int): Number of input channels.
-        partition_function (Callable): Partition function to be utilized (grid or window partition).
-        reverse_function (Callable): Reverse function to be utilized  (grid or window reverse).
-        num_heads (int, optional): Number of attention heads. Default 32
-        grid_window_size (Tuple[int, int], optional): Grid/Window size to be utilized. Default (7, 7)
-        attn_drop (float, optional): Dropout ratio of attention weight. Default: 0.0
-        drop (float, optional): Dropout ratio of output. Default: 0.0
-        drop_path (float, optional): Dropout ratio of path. Default: 0.0
-        mlp_ratio (float, optional): Ratio of mlp hidden dim to embedding dim. Default: 4.0
-        act_layer (Type[nn.Module], optional): Type of activation layer to be utilized. Default: nn.GELU
-        norm_layer (Type[nn.Module], optional): Type of normalization layer to be utilized. Default: nn.BatchNorm2d
+        in_channels (int): 输入通道数。
+        partition_function (Callable): 要使用的分割函数（网格分割或窗口分割）。
+        reverse_function (Callable): 要使用的恢复函数（网格恢复或窗口恢复）。
+        num_heads (int, optional): 注意力头的数量。默认值为32。
+        grid_window_size (Tuple[int, int], optional): 要使用的网格/窗口大小。默认值为(7, 7)。
+        attn_drop (float, optional): 注意力权重的丢弃率。默认值为0.0。
+        drop (float, optional): 输出的丢弃率。默认值为0.0。
+        drop_path (float, optional): 路径的丢弃率。默认值为0.0。
+        mlp_ratio (float, optional): MLP隐藏层维度与嵌入维度的比率。默认值为4.0。
+        act_layer (Type[nn.Module], optional): 要使用的激活层类型。默认值为nn.GELU。
+        norm_layer (Type[nn.Module], optional): 要使用的归一化层类型。默认值为nn.BatchNorm2d。
     """
 
     def __init__(
@@ -428,7 +497,21 @@ class MaxViTTransformerBlock(nn.Module):
         output = self.reverse_function(output, (H, W), self.grid_window_size)
         return output
 
-
+# 跨模态融合块
+'''
+原理：
+1.包含两个MAConv块分别处理两种模态
+2.使用块级变换器进行窗口内跨模态融合
+3.使用网格级变换器进行全局跨模态融合
+架构流程：
+1.两个MAConv分别处理两种模态输入
+2.块级变换器执行窗口内跨模态注意力
+3.网格级变换器执行全局跨模态注意力
+用途：
+1.实现多尺度跨模态融合
+2.结合局部和全局特征信息
+3.提高模型对多模态数据的理解能力
+'''
 class MaxViTBlock(nn.Module):
     """ MaxViT block composed of MBConv block, Block Attention, and Grid Attention.
 
@@ -482,10 +565,6 @@ class MaxViTBlock(nn.Module):
             norm_layer=norm_layer,
             drop_path=drop_path
         )
-
-
-
-
         # Init Block and Grid Transformer
         self.block_transformer = MaxViTTransformerBlock(
             in_channels=out_channels,
@@ -516,16 +595,26 @@ class MaxViTBlock(nn.Module):
 
     def forward(self, input: torch.Tensor, input_fu: torch.Tensor) -> torch.Tensor:
 
-        x_ = self.mb1_conv(input)
-        x_fu =self.mb2_conv(input_fu)
-        x_block_cross = self.block_transformer(x_,x_fu)
-        x_grid_cross = self.grid_transformer(x_block_cross,x_fu)
+        x_ = self.mb1_conv(input)       # 处理第一种模态
+        x_fu =self.mb2_conv(input_fu)   # 处理第二种模态
+        x_block_cross = self.block_transformer(x_,x_fu)     # 块级交叉注意力
+        x_grid_cross = self.grid_transformer(x_block_cross,x_fu)    # 网格级交叉注意力
         output = x_grid_cross
 
 
         return output
 
-
+# 网络阶段
+'''
+原理：
+1.由多个MaxViTBlock组成
+2.第一个块负责下采样
+3.后续块保持特征图尺寸不变
+用途：
+1.构建分层特征表示
+2.实现渐进式特征提取
+3.控制网络深度和复杂度
+'''
 class MaxViTStage(nn.Module):
     """ Stage of the MaxViT.
 
@@ -593,7 +682,21 @@ class MaxViTStage(nn.Module):
         output = self.blocks(input)
         return output
 
-
+# 完整网络
+'''
+原理：
+1.卷积词干stem:初始特征提取
+2.多个MaxViTStage:分层特征学习
+3.全局池化和分类头:最终预测
+网络结构：
+1.卷积词干:3x3卷积 → 激活 → 3x3卷积 → 激活
+2.分层特征提取:4个MaxViTStage,通道数递增
+3.分类头:全局池化 → 线性层
+用途：
+1.构建端到端的跨模态融合网络
+2.实现图像分类或其他视觉任务
+3.支持多模态输入的联合学习
+'''
 class MaxViT(nn.Module):
     """ Implementation of the MaxViT proposed in:
         https://arxiv.org/pdf/2204.01697.pdf
