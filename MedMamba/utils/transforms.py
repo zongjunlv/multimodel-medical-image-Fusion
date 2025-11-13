@@ -22,13 +22,14 @@ def get_transforms(config):
     Returns:
         dict: Dictionary containing train and validation transforms
     """
+    # 从配置中提取尺寸与归一化超参数
     img_size = config.data.img_size
     normalize_mean = config.data.normalize_mean
     normalize_std = config.data.normalize_std
     
     # Use medical image friendly transforms if MONAI is available
     if MONAI_AVAILABLE and hasattr(config.data, 'use_medical_transforms') and config.data.use_medical_transforms:
-        data_transform = get_medical_transforms(config)
+        data_transform = get_medical_transforms(config)  # 优先使用 MONAI 管线
     else:
         # Fallback to standard transforms with center crop instead of random crop
         data_transform = {
@@ -126,6 +127,7 @@ def get_3d_medical_transforms(config):
     use_augmentation = getattr(config.data, 'use_augmentation', True)
     
     # Basic transforms for both train and val
+    # 所有阶段共享的体素预处理步骤
     base_transforms = [
         EnsureChannelFirst(channel_dim='no_channel'),
         ScaleIntensity(minv=0.0, maxv=1.0),

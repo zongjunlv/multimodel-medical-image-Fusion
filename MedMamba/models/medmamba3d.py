@@ -1,13 +1,34 @@
 import math
 
+from monai.networks.blocks.cablock import FeedForward
 import torch
 import torch.nn as nn
 from timm.models.layers import trunc_normal_, DropPath
+from monai.networks.nets import DenseNet121, resnet18
 
 from .layers import (
     PatchEmbed3D, PatchMerging3D, VSS3DLayer,
     SS3D
 )
+
+class Model(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.Resnet18 = resnet18(
+            spatial_dims = 3,
+            n_input_channels = 1,
+            num_classes = 3,
+            pretrained= True,
+            feed_forward = False,
+            shortcut_type = 'A',
+            bias_downsample = True
+        )
+        self.fc = nn.Linear(512, 3)
+    def forward(self, x):
+        x = self.Resnet18(x)
+        x = self.fc(x)
+        return x
+
 
 
 class VSSM3D(nn.Module):
@@ -19,38 +40,19 @@ class VSSM3D(nn.Module):
     """
     def __init__(self, 
                  patch_size=4, 
-
                  in_chans=1, 
                  num_classes=3, 
                  depths=[2, 2, 4, 2],
                  dims=[96, 192, 384, 768], 
                  d_state=16, 
-
                  drop_rate=0., 
                  attn_drop_rate=0., 
                  drop_path_rate=0.1,
-                 
                  norm_layer=nn.LayerNorm, 
                  patch_norm=True,
                  use_checkpoint=False,
                  scan_directions=6,
                  **kwargs):
-        """
-        Args:
-            patch_size (int): Patch size for 3D patches
-            in_chans (int): Number of input channels (1 for grayscale medical images)
-            num_classes (int): Number of classification classes
-            depths (list): Number of blocks in each stage
-            dims (list): Feature dimensions for each stage
-            d_state (int): State space model dimension
-            drop_rate (float): Dropout rate
-            attn_drop_rate (float): Attention dropout rate
-            drop_path_rate (float): Stochastic depth rate
-            norm_layer: Normalization layer
-            patch_norm (bool): Whether to normalize patches
-            use_checkpoint (bool): Whether to use gradient checkpointing
-            scan_directions (int): Number of scanning directions (default: 6 for 3D)
-        """
         super().__init__()
         self.num_classes = num_classes
         self.num_layers = len(depths)
@@ -199,13 +201,12 @@ def create_medmamba3d_small(num_classes=3, **kwargs):
     return model
 
 
-def create_medmamba3d_base(num_classes=3, **kwargs):
+def create_medmamba3d_base(num_classes=3):
     """Create MedMamba3D-Base model"""
     model = VSSM3D(
         depths=[2, 2, 12, 2],
         dims=[128, 256, 512, 1024],
-        num_classes=num_classes,
-        **kwargs
+        num_classes=num_classes
     )
     return model
 

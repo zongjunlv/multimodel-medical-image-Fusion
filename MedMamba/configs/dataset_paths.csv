@@ -1,3 +1,0 @@
-train_root,val_root,test_root,class_names
-/data02/workspace/LZJ_SPACE/dataset/ABUS_Classification/110_256_256,/data02/workspace/LZJ_SPACE/dataset/ABUS_Classification/110_256_256,/data02/workspace/LZJ_SPACE/dataset/ABUS_Classification/330_512_512,"benign,healthy,malignant"
-

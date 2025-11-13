@@ -1,5 +1,5 @@
 # Data processing modules
-from .datasets import create_data_loaders, get_dataset_info
+from .medical_dataset import Medical_Dataset
 from utils.transforms import (
     get_transforms,
     get_medmnist_transforms,
@@ -7,6 +7,5 @@ from utils.transforms import (
 )
 
 __all__ = [
-    'create_data_loaders', 'get_dataset_info',
-    'get_transforms', 'get_medmnist_transforms', 'get_augmented_transforms'
+    'Medical_Dataset'
 ]

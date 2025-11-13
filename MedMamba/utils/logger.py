@@ -19,15 +19,16 @@ def setup_logger(name, log_file=None, level=logging.INFO):
     Returns:
         Logger instance
     """
+    # 标准化日志格式，便于在控制台与文件中保持一致
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
     
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    logger.setLevel(level)  # 设定根 logger 级别，控制最低输出级别
     
     # Console handler
-    ch = logging.StreamHandler(sys.stdout)
+    ch = logging.StreamHandler(sys.stdout)  # 始终输出到 stdout，方便 CLI 读取
     ch.setLevel(level)
     ch.setFormatter(formatter)
     logger.addHandler(ch)

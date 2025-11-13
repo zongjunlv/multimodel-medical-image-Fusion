@@ -10,7 +10,7 @@ import numpy as np
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions"""
     with torch.no_grad():
-        maxk = max(topk)
+        maxk = max(topk)  # 计算需要的最大 top-k
         batch_size = target.size(0)
 
         _, pred = output.topk(maxk, 1, True, True)
@@ -47,7 +47,7 @@ class MetricsCalculator:
             targets: Ground truth labels
         """
         # Convert to probabilities
-        probs = F.softmax(outputs, dim=1)
+        probs = F.softmax(outputs, dim=1)  # 转换为概率方便后续 AUC 计算
         
         # Get predictions
         _, predicted = torch.max(outputs, 1)
@@ -60,7 +60,7 @@ class MetricsCalculator:
         # Store
         self.all_predictions.extend(predicted)
         self.all_targets.extend(targets)
-        self.all_probabilities.extend(probs)
+        self.all_probabilities.extend(probs)  # 保存逐批统计，验证结束统一计算
     
     def compute_metrics(self):
         """

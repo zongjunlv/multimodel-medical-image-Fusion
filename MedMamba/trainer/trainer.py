@@ -1,3 +1,4 @@
+from cProfile import label
 import os
 import sys
 import warnings
@@ -9,11 +10,78 @@ import time
 
 from utils import AverageMeter, MetricsCalculator, accuracy
 
+class Trainer:
+    def __init__(self, model, optimizer, criterion, device):
+        self.model = model
+        self.optimizer = optimizer
+        self.criterion = criterion
+        self.device = device
+
+    def train(self, dataloader):
+        self.model.train()
+        stats = {
+            'total_loss' : 0.0,
+            'processed_samples' : 0
+        }
+        
+        pbar = tqdm(dataloader, desc='Train', bar_format='{l_bar}{bar:30}{r_bar}', colour='blue')
+
+        for batch in pbar:
+            img, label = [x.to(self.device) for x in batch]
+
+            self.optimizer.zero_grad()
+            logits = self.model(img)
+            total_loss = self.criterion(logits, label)
+
+            total_loss.backward()
+            self.optimizer.step()
+
+            batch_size = img.size(0)
+            stats['total_loss'] += total_loss.item()
+            stats['processed_samples'] += batch_size
+
+            postfix = {
+                'loss': f"{stats['total_loss']/stats['processed_samples']:.4f}",
+                'lr': f"{self.optimizer.param_groups[0]['lr']:.2e}"
+            }
+
+            pbar.set_postfix(postfix)
+
+        return stats['total_loss'] / stats['processed_samples']
+    
+    def validate(self, dataloader):
+        self.model.eval()
+        total_loss = 0.0
+        processed_sample = 0
+
+        pbar = tqdm(dataloader, desc='val', bar_format='{l_bar}{bar:30}{r_bar}', colour='green')
+
+        for batch in pbar:
+            img, label = [x.to(self.device) for x in batch]
+
+            logits = self.model(img)
+            loss = self.criterion(logits, label)
+
+            batch_size = img.size(0)
+            total_loss += loss.item() * batch_size
+            processed_sample += batch_size
+
+            pbar.set_postfix({
+                    'loss':f'{total_loss/processed_sample:.4f}'
+                }
+            )
+        
+        return total_loss / processed_sample
+
+
+
+
 
 class MedMambaTrainer:
     """Trainer for MedMamba model"""
     
     def __init__(self, model, config, train_loader, val_loader, device, logger=None):
+        # 存储训练核心对象与运行设备
         self.model = model
         self.config = config
         self.train_loader = train_loader
@@ -61,6 +129,7 @@ class MedMambaTrainer:
     
     def _create_optimizer(self):
         """Create optimizer based on configuration"""
+        # 根据配置关键字选择对应优化器
         if self.config.training.optimizer.lower() == 'adam':
             return optim.Adam(
                 self.model.parameters(),
@@ -92,7 +161,7 @@ class MedMambaTrainer:
         losses = AverageMeter('Loss', ':.4e')
         top1 = AverageMeter('Acc@1', ':6.2f')
         
-        self.train_metrics.reset()
+        self.train_metrics.reset()  # 清空累计指标，避免跨 epoch 污染
         
         train_bar = tqdm(self.train_loader, file=sys.stdout, desc=f'Train Epoch [{self.epoch+1}/{self.config.training.epochs}]')
         
@@ -101,7 +170,7 @@ class MedMambaTrainer:
             # Measure data loading time
             data_time.update(time.time() - end)
             
-            images, labels = images.to(self.device), labels.to(self.device)
+            images, labels = images.to(self.device), labels.to(self.device)  # 同步到目标设备
             
             # Forward pass
             outputs = self.model(images)
@@ -110,7 +179,7 @@ class MedMambaTrainer:
             # Backward pass
             self.optimizer.zero_grad()
             loss.backward()
-            self.optimizer.step()
+            self.optimizer.step()  # 立即更新参数，未做梯度累积
             
             # Measure accuracy and record loss
             acc1 = accuracy(outputs, labels, topk=(1,))[0]
@@ -118,7 +187,7 @@ class MedMambaTrainer:
             top1.update(acc1[0], images.size(0))
             
             # Update metrics
-            self.train_metrics.update(outputs, labels)
+            self.train_metrics.update(outputs, labels)  # 汇总混淆矩阵相关统计
             
             # Measure elapsed time
             batch_time.update(time.time() - end)
@@ -157,7 +226,7 @@ class MedMambaTrainer:
                     
                     # Forward pass
                     outputs = self.model(images)
-                    loss = self.criterion(outputs, labels)
+                    loss = self.criterion(outputs, labels)  # 验证阶段只做前向和统计
                     
                     # Measure accuracy and record loss
                     acc1 = accuracy(outputs, labels, topk=(1,))[0]

@@ -1,1 +1,6 @@
 /checkpoints_3d
+/ConfusionMatrix
+/swanlog
+/grad_cam
+**best_model.pth
+**AGENTS.md
