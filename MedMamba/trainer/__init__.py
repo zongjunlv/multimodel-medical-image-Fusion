@@ -1,4 +1,4 @@
 # Training modules
-from .trainer import MedMambaTrainer, Trainer
+from .trainer import Trainer
 
-__all__ = ['MedMambaTrainer', 'Trainer']
+__all__ = ['Trainer']

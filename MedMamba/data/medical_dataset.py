@@ -13,7 +13,7 @@ from monai.transforms import Compose, ScaleIntensity, EnsureChannelFirst, Resize
 
 
 class Medical_Dataset(Dataset):
-    def __init__(self,  mode, target_size = (128,128,128)):
+    def __init__(self,  mode, target_size = (96,96,96)):
         if mode == 'train':
             self.csv_path = '/data02/workspace/LZJ_SPACE/dataset/ABUS_Classification/330_512_512/330_512_512_train.csv'
             self.transforms = Compose([

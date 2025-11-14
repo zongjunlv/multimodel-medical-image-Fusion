@@ -14,10 +14,11 @@ from torch.utils.data import DataLoader
 import torch.nn as nn
 
 
-from trainer import MedMambaTrainer, Trainer
-from utils import setup_logger, log_config, log_model_info
+from trainer import Trainer
+from utils import compute_all_metrics
 from data.medical_dataset import Medical_Dataset
-from models.medmamba3d import Model
+from models import Model
+from utils.evaluator import evaluate_model
 
 
 def set_seed(seed):
@@ -44,14 +45,14 @@ def main():
     train_dataset = Medical_Dataset(mode='train')
     val_dataset = Medical_Dataset(mode='val')
 
-    batch_size = 4
-    lr = 1e-4
+    batch_size = 8
+    lr = 1e-5
     weight_decay = 1e-2
 
     train_dataloader = DataLoader(train_dataset, batch_size, shuffle=True, pin_memory=True, drop_last=True,
-                                        num_workers=8,persistent_workers=True)
+                                        num_workers=12,persistent_workers=True, prefetch_factor=8)
     val_dataloader = DataLoader(val_dataset, batch_size, shuffle=False, pin_memory=True,
-                                        num_workers=4,persistent_workers=True)
+                                        num_workers=12,persistent_workers=True, prefetch_factor=8)
 
     device = torch.device("cuda" if torch.cuda.is_available() else 'cpu')
 
@@ -89,7 +90,8 @@ def main():
         config={
             "learning_rate": lr,
             "architecture": "ABUS",
-            "epochs": num_epochs
+            "epochs": num_epochs,
+            "logdir": "/data02/workspace/LZJ_SPACE/MedMamba/assets/logs"
         }
     )
     for epoch in range(num_epochs):
@@ -104,7 +106,7 @@ def main():
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            save_dir = 'checkpoints_3d'
+            save_dir = 'assets/checkpoints_3d'
             save_path = os.path.join(save_dir, 'best_model.pth')
             torch.save(model.state_dict(), save_path)
             print(f"  Weights updated!")
@@ -116,7 +118,20 @@ def main():
                 print(f"  Early stopping triggered at epoch {epoch + 1}.")
                 print(f"  Best model saved as: best_model.pth")
                 break
-        swanlab.log({"train_loss":train_loss,"val_loss": val_loss})
+        
+        if epoch % 5 == 0:
+            accuracy, auc, sensitivity, specificity, f1, mcc = evaluate_model(model, val_dataloader, device, verbose=True)
+        else:
+            accuracy, auc, sensitivity, specificity, f1, mcc = evaluate_model(model, val_dataloader, device, verbose=False)
+        swanlab.log({"train_loss":train_loss,
+                    "val_loss": val_loss, 
+                    "acc":accuracy,
+                    "auc":auc, 
+                    "sensitivity":sensitivity, 
+                    "specificity":specificity, 
+                    "f1":f1, 
+                    "mcc":mcc} 
+        )
     total_time = time.time() - start_time
     print("\n" + "="*60)
     print(f"Training completed in {str(timedelta(seconds=int(total_time)))}")
