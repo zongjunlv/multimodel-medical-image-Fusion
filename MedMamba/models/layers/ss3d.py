@@ -124,6 +124,7 @@ class SS3D(nn.Module):
         self.act = nn.SiLU()    #给后续特征加一个 SiLU（Swish）激活，避免模型退化成纯线性系统
 
         
+        
         self.x_proj = tuple(
             # 输入向量长度self.d_inner扩展到输出长度 self.dt_rank + 2*self.d_state。
             # dt_rank用于 Δt 投影， 两个d_state分别对应SSM的B，C矩阵
@@ -152,7 +153,7 @@ class SS3D(nn.Module):
         self.Ds = self.D_init(self.d_inner, copies=self.scan_directions, merge=True)
 
         # Forward core function
-        self.forward_core = self.forward_corev0
+        self.forward_core = self.forward_core
 
         # Output layers
         self.out_norm = nn.LayerNorm(self.d_inner)
@@ -201,8 +202,7 @@ class SS3D(nn.Module):
 
     @staticmethod
     def A_log_init(d_state, d_inner, copies=1, device=None, merge=True):
-        """Initialize A matrix (state transition matrix)"""
-        # S4D real initialization
+        
         A = repeat(
             torch.arange(1, d_state + 1, dtype=torch.float32, device=device),
             "n -> d n",
@@ -219,7 +219,7 @@ class SS3D(nn.Module):
 
     @staticmethod
     def D_init(d_inner, copies=1, device=None, merge=True):
-        """Initialize D parameter (skip connection)"""
+
         D = torch.ones(d_inner, device=device)
         if copies > 1:
             D = repeat(D, "n1 -> r n1", r=copies)
@@ -258,7 +258,7 @@ class SS3D(nn.Module):
         
         return y
 
-    def forward_corev0(self, x: torch.Tensor):
+    def forward_core(self, x: torch.Tensor):
        
         self.selective_scan = selective_scan_fn
         
@@ -280,12 +280,12 @@ class SS3D(nn.Module):
         seq_w_rev = torch.flip(seq_w, dims=[-1])
 
         # 堆成 K=6 条扫描序列
-        xs = torch.stack([seq_d, seq_d_rev, seq_h, seq_h_rev, seq_w, seq_w_rev], dim=1)  # (B, 6, C, L)
+        xs = torch.stack([seq_d, seq_d_rev, seq_h, seq_h_rev, seq_w, seq_w_rev], dim=1)  # (B, K, C, L)
 
         # 在进入 selective scan 之前，为每个扫描方向生成状态空间模型所需的 Δ、B、C 参数
         # xs(batch, direction, channel, sequence_length)
         # self.x_proj_weight 是事先堆好的 (K, dt_rank + 2*d_state, d_inner) 张量
-        # torch.split把第二维按 [dt_rank, d_state, d_state] 切开，得到三段
+        # einsum 按照方向 k 和通道 c 做矩阵乘法，把每个方向的 C 维特征映射到 D 维，保持批次 b 和序列位置 l
         x_dbl = torch.einsum("b k c l, k d c -> b k d l", xs, self.x_proj_weight)
 
         # 在第 2 维（索引从 0 开始）按照 [dt_rank, d_state, d_state] 这三个长度依次切分：
@@ -297,7 +297,7 @@ class SS3D(nn.Module):
         # 按 r 维做乘法并对 r 求和，得到 (B, K, C, L)。
         dts = torch.einsum("b k r l, k c r -> b k c l", dts, self.dt_projs_weight)
 
-        # Prepare tensors for selective scan
+        
         xs = xs.float().view(B, -1, L)  # (b, k * c, l)
         dts = dts.contiguous().float().view(B, -1, L)  # (b, k * c, l)
         Bs = Bs.float().view(B, K, -1, L)  # (b, k, d_state, l)
@@ -306,7 +306,7 @@ class SS3D(nn.Module):
         As = -torch.exp(self.A_logs.float()).view(-1, self.d_state)  # (k * c, d_state)
         dt_projs_bias = self.dt_projs_bias.float().view(-1)  # (k * c)
 
-        # Selective scan
+        # out_y = (B, K, d_inner, L)
         out_y = self.selective_scan(
             xs, dts, 
             As, Bs, Cs, Ds, z=None,
@@ -317,29 +317,20 @@ class SS3D(nn.Module):
         
         assert out_y.dtype == torch.float
 
-        # Reconstruct 3D output
+        # y =  (B, D, H, W, C)
         y = self.reconstruct_from_sequences(out_y, B, D, H, W)
         
         return y
 
 
     def forward(self, x: torch.Tensor, **kwargs):
-        """
-        Forward pass for SS3D
-        
-        Args:
-            x: input tensor of shape (B, D, H, W, C)
-            
-        Returns:
-            out: output tensor of shape (B, D, H, W, C)
-        """
         # x.shape = （B, D, H, W, C）   C = d_model，
 
         # Input projection
         xz = self.in_proj(x)
         x, z = xz.chunk(2, dim=-1)
 
-        # Convert to (B, C, D, H, W) for 3D convolution
+        # 转换成(B, C, D, H, W) 
         x = x.permute(0, 4, 1, 2, 3).contiguous()
         x = self.act(self.conv3d(x))
         
@@ -359,22 +350,4 @@ class SS3D(nn.Module):
         return out
 
 
-# Utility function to create different SS3D variants
-def create_ss3d_tiny(d_model=96, **kwargs):
-    """Create a tiny SS3D model"""
-    return SS3D(d_model=d_model, d_state=8, **kwargs)
 
-
-def create_ss3d_small(d_model=192, **kwargs):  
-    """Create a small SS3D model"""
-    return SS3D(d_model=d_model, d_state=16, **kwargs)
-
-
-def create_ss3d_base(d_model=384, **kwargs):
-    """Create a base SS3D model"""
-    return SS3D(d_model=d_model, d_state=16, **kwargs)
-
-
-def create_ss3d_large(d_model=768, **kwargs):
-    """Create a large SS3D model"""
-    return SS3D(d_model=d_model, d_state=32, **kwargs)

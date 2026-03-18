@@ -1,4 +1,5 @@
 dataset/
+/MedMamba/
 
 MACTFusion/logs/
 MACTFusion/*.yaml

@@ -1,6 +1,10 @@
 /checkpoints_3d
 /ConfusionMatrix
 /swanlog
+/dataset
+/__pycache__
+**/__pycache__/
+/.vscode
 /grad_cam
 **best_model.pth
 **AGENTS.md

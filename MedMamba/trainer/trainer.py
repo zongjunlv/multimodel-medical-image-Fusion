@@ -55,19 +55,20 @@ class Trainer:
 
         pbar = tqdm(dataloader, desc='val', bar_format='{l_bar}{bar:30}{r_bar}', colour='green')
 
-        for batch in pbar:
-            img, label = [x.to(self.device) for x in batch]
+        with torch.inference_mode():
+            for batch in pbar:
+                img, label = [x.to(self.device) for x in batch]
 
-            logits = self.model(img)
-            loss = self.criterion(logits, label)
+                logits = self.model(img)
+                loss = self.criterion(logits, label)
 
-            batch_size = img.size(0)
-            total_loss += loss.item() * batch_size
-            processed_sample += batch_size
+                batch_size = img.size(0)
+                total_loss += loss.item() * batch_size
+                processed_sample += batch_size
 
-            pbar.set_postfix({
-                    'loss':f'{total_loss/processed_sample:.4f}'
-                }
-            )
+                pbar.set_postfix({
+                        'loss':f'{total_loss/processed_sample:.4f}'
+                    }
+                )
         
         return total_loss / processed_sample

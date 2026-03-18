@@ -1,39 +1,21 @@
 import math
 
-from monai.networks.blocks.cablock import FeedForward
 import torch
 import torch.nn as nn
 from timm.models.layers import trunc_normal_, DropPath
 from monai.networks.nets import DenseNet121, resnet18
+from monai.networks.blocks.cablock import FeedForward
+
 
 from .layers import (
     PatchEmbed3D, PatchMerging3D, VSS3DLayer,
     SS3D
 )
 
-class Model(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.Resnet18 = resnet18(
-            spatial_dims = 3,
-            n_input_channels = 1,
-            num_classes = 3,
-            pretrained= True,
-            feed_forward = False,
-            shortcut_type = 'A',
-            bias_downsample = True
-        )
-        self.fc = nn.Linear(512, 3)
-    def forward(self, x):
-        x = self.Resnet18(x)
-        x = self.fc(x)
-        return x
-
-
 
 class VSSM3D(nn.Module):
     def __init__(self, 
-                 patch_size=4, 
+                 patch_size=4,
                  in_chans=1, 
                  num_classes=3, 
                  depths=[2, 2, 4, 2],
@@ -80,7 +62,7 @@ class VSSM3D(nn.Module):
                 dim=dims[i_layer],
                 depth=depths[i_layer],
                 d_state=math.ceil(dims[0] / 6) if d_state is None else d_state,
-                # drop_path从dpr里去，越往后的层数越大
+                # drop_path从dpr里取，越往后的层数越大
                 drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                 norm_layer=norm_layer,
                 # 持续下采样至最后一层
@@ -122,10 +104,7 @@ class VSSM3D(nn.Module):
     def forward_backbone(self, x):
         # Patch embedding: (B, C, D, H, W) -> (B, D', H', W', embed_dim)
         x = self.patch_embed(x)
-        
-        
         x = self.pos_drop(x)
-
         # Forward through layers
         for layer in self.layers:
             x = layer(x)
@@ -195,57 +174,3 @@ def create_medmamba3d_large(num_classes=3, **kwargs):
     return model
 
 
-class MedMamba3DClassifier(nn.Module):
-    def __init__(self,
-                 model_size='base',
-                 num_classes=3,
-                 in_chans=1,
-                 input_size=(64, 64, 64),
-                 normalization='instance',
-                 dropout_rate=0.1,
-                 **kwargs):
-        super().__init__()
-        
-        self.input_size = input_size
-        self.num_classes = num_classes
-        
-        # Input normalization
-        if normalization == 'instance':
-            self.input_norm = nn.InstanceNorm3d(in_chans)
-        elif normalization == 'batch':
-            self.input_norm = nn.BatchNorm3d(in_chans)
-        elif normalization == 'group':
-            self.input_norm = nn.GroupNorm(num_groups=1, num_channels=in_chans)
-        else:
-            self.input_norm = nn.Identity()
-        
-        # Create backbone model
-        model = VSSM3D(
-            depths=[2, 2, 12, 2],
-            dims=[128, 256, 512, 1024],
-            num_classes=num_classes
-        )
-
-        self.backbone = model(
-            num_classes=num_classes,
-            in_chans=in_chans,
-            drop_rate=dropout_rate,
-            **kwargs
-        )
-        
-    def preprocess(self, x):
-        # Normalize input
-        x = self.input_norm(x)
-        
-        # Clip extreme values (common in medical imaging)
-        x = torch.clamp(x, min=-3, max=3)
-        
-        return x
-    
-    def forward(self, x):
-        x = self.preprocess(x)
-        
-        # Forward through backbone
-        logits = self.backbone(x)
-        
-        return logits

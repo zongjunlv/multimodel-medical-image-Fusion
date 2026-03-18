@@ -1,19 +1,24 @@
 import torch
+import sys
 from tqdm import tqdm
 import numpy as np
 import torch.nn.functional as F
 from .metrics import compute_all_metrics
 
 
-def evaluate(model, dataloader, device):
+def evaluate(model, dataloader, device, show_details: bool = True, desc: str = "Eval"):
 
     model.to(device).eval()
     labels_list, probs_list, preds_list = [], [], []
 
     with torch.no_grad():
-        pbar = tqdm(dataloader, desc='Test', 
-                       bar_format='{l_bar}{bar:30}{r_bar}',
-                       colour='green')
+        pbar = tqdm(
+            dataloader,
+            desc=desc,
+            bar_format='{l_bar}{bar:30}{r_bar}',
+            colour='green',
+            disable=not sys.stdout.isatty(),
+        )
         
         for img, labels in pbar:
             img, labels = img.to(device), labels.to(device)
@@ -38,6 +43,15 @@ def evaluate(model, dataloader, device):
     labels_arr = np.concatenate(labels_list, axis=0)
     probs_arr = np.concatenate(probs_list, axis=0)
     preds_arr = np.concatenate(preds_list, axis=0)
+
+    if show_details:
+        labels = labels_arr
+        preds = preds_arr
+        print('labels unique:', np.unique(labels, return_counts=True))
+        print('preds unique :', np.unique(preds, return_counts=True))
+        from sklearn.metrics import confusion_matrix
+        print(confusion_matrix(labels, preds))
+
     
     # 计算指标
     all_metrics = compute_all_metrics(labels_arr, preds_arr, probs_arr)
@@ -47,14 +61,24 @@ def evaluate(model, dataloader, device):
     sensitivity = all_metrics['sensitivity'] 
     specificity = all_metrics['specificity']
     f1 = all_metrics['macro_f1']
+    precision = all_metrics['precision']
     mcc = all_metrics['mcc']
     
-    return accuracy, auc, sensitivity, specificity, f1, mcc
+    return accuracy, auc, sensitivity, specificity, f1, precision, mcc
 
 
-def evaluate_model(model, dataloader, device, verbose=True):
+def evaluate_model(
+    model,
+    dataloader,
+    device,
+    verbose: bool = True,
+    show_details: bool = True,
+    desc: str = "Eval",
+):
 
-    accuracy, auc, sensitivity, specificity, f1, mcc = evaluate(model, dataloader, device)
+    accuracy, auc, sensitivity, specificity, f1, precision, mcc = evaluate(
+        model, dataloader, device, show_details=show_details, desc=desc
+    )
     
     if verbose:
         print(f"Accuracy: {accuracy:.4f}")
@@ -62,8 +86,7 @@ def evaluate_model(model, dataloader, device, verbose=True):
         print(f"Sens:     {sensitivity:.4f}")
         print(f"Spec:     {specificity:.4f}")
         print(f"F1:       {f1:.4f}")
+        print(f"Prec:     {precision:.4f}")
         print(f"MCC:      {mcc:.4f}")
     
-    return accuracy, auc, sensitivity, specificity, f1, mcc
-
-
+    return accuracy, auc, sensitivity, specificity, f1, precision, mcc

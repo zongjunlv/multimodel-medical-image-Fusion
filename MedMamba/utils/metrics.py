@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.metrics import (
     accuracy_score, 
     f1_score, 
+    precision_score,
     recall_score,
     roc_auc_score, 
     matthews_corrcoef,
@@ -13,12 +14,17 @@ def compute_accuracy(labels: np.ndarray, preds: np.ndarray) -> float:
     return float(accuracy_score(labels, preds))
 
 def compute_auc(labels: np.ndarray, probs: np.ndarray) -> float:
-    """计算多分类AUC (macro平均)"""
+    """计算AUC，兼容二分类和多分类"""
     try:
+        unique_labels = np.unique(labels)
+        if len(unique_labels) <= 2:
+            if probs.ndim == 2 and probs.shape[1] >= 2:
+                return float(roc_auc_score(labels, probs[:, 1]))
+            return float(roc_auc_score(labels, probs))
         return float(roc_auc_score(labels, probs, multi_class='ovr', average='macro'))
     except ValueError:
-        # 如果某些类别在测试集中不存在，返回0
         return 0.0
+
 
 def compute_sensitivity_specificity(labels: np.ndarray, preds: np.ndarray) -> tuple[float, float]:
     """计算敏感性(召回率)和特异性"""
@@ -47,6 +53,11 @@ def compute_macro_f1(labels: np.ndarray, preds: np.ndarray) -> float:
     return float(f1_score(labels, preds, average='macro', zero_division=0))
 
 
+def compute_precision(labels: np.ndarray, preds: np.ndarray) -> float:
+    """计算macro Precision"""
+    return float(precision_score(labels, preds, average='macro', zero_division=0))
+
+
 def compute_matthews_corrcoef(labels: np.ndarray, preds: np.ndarray) -> float:
     """计算Matthews相关系数 (多分类版本)"""
     try:
@@ -63,6 +74,7 @@ def compute_all_metrics(labels: np.ndarray, preds: np.ndarray, probs: np.ndarray
     # 基本指标
     metrics['accuracy'] = compute_accuracy(labels, preds)
     metrics['macro_f1'] = compute_macro_f1(labels, preds)
+    metrics['precision'] = compute_precision(labels, preds)
     metrics['mcc'] = compute_matthews_corrcoef(labels, preds)
     
     # 敏感性和特异性
@@ -75,4 +87,3 @@ def compute_all_metrics(labels: np.ndarray, preds: np.ndarray, probs: np.ndarray
         metrics['auc'] = compute_auc(labels, probs)
     
     return metrics
-

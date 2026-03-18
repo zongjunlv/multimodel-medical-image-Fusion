@@ -17,11 +17,11 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 import torch.nn as nn
 
 
-from models.medmamba3d import VSSM3D
+from models.medmamba3d_videomamba import create_medmamba3d_tiny
 from trainer import Trainer
 from utils import compute_all_metrics
 from data.medical_dataset import Medical_Dataset
-from models import Model
+from models import model
 from utils.evaluator import evaluate_model
 
 
@@ -49,22 +49,26 @@ def main():
     seed = 3407
     set_seed(seed)
 
-    train_path = '/data02/workspace/LZJ_SPACE/MedMamba/dataset/ABUS_Classification/ABUS_NEW/split_train_7_1_2.csv'
-    val_path = '/data02/workspace/LZJ_SPACE/MedMamba/dataset/ABUS_Classification/ABUS_NEW/split_val_7_1_2.csv'
-    test_path = '/data02/workspace/LZJ_SPACE/MedMamba/dataset/ABUS_Classification/ABUS_NEW/split_test_7_1_2.csv'
+    # train_path = '/data02/workspace/LZJ_SPACE/MedMamba/dataset/ABUS_Classification/ABUS_NEW/split_train_7_1_2.csv'
+    # val_path = '/data02/workspace/LZJ_SPACE/MedMamba/dataset/ABUS_Classification/ABUS_NEW/split_val_7_1_2.csv'
+    # test_path = '/data02/workspace/LZJ_SPACE/MedMamba/dataset/ABUS_Classification/ABUS_NEW/split_test_7_1_2.csv'
 
+    train_path = '/data02/workspace/LZJ_SPACE/MedMamba/dataset/ABUS_Classification/TDSC/labels_train_cache.csv'
+    val_path = '/data02/workspace/LZJ_SPACE/MedMamba/dataset/ABUS_Classification/TDSC/labels_val_cache.csv'
+    
     train_dataset = Medical_Dataset(mode='train', csv_path= train_path)
     val_dataset = Medical_Dataset(mode='val', csv_path= val_path)
-    test_dataset = Medical_Dataset(mode='test', csv_path= test_path)
     
 
-    batch_size = 8
+    batch_size = 4
     lr = 1e-5
     weight_decay = 1e-2
 
     # 读取训练集标签统计（按文件，标签 0/1/2）
     train_df = pd.read_csv(train_path)
-    counts = train_df['label'].value_counts().reindex([0,1,2], fill_value=1).astype(float)
+    # counts = train_df['label'].value_counts().reindex([0,1,2], fill_value=1).astype(float)
+    num_classes = 2
+    counts = train_df['label'].value_counts().reindex([0,1], fill_value=1).astype(float)
     # 采样权重：使用 sqrt(1/freq) 以避免过度倾向少数类
     weight_map = (counts.max() / counts) ** 0.5
     weight_map = weight_map / weight_map.sum()
@@ -75,8 +79,8 @@ def main():
 
     train_dataloader = DataLoader(train_dataset, 
                                   batch_size, 
-                                #   shuffle=True, 
-                                  sampler=sampler,
+                                  shuffle=True, 
+                                #   sampler=sampler,
                                   pin_memory=True, 
                                   drop_last=True,                                        num_workers=12,
                                   persistent_workers=True, 
@@ -88,19 +92,11 @@ def main():
                                 pin_memory=True,                                        num_workers=12,
                                 persistent_workers=True, 
                                 prefetch_factor=8)
-    
-    test_dataloader = DataLoader(test_dataset, 
-                                 batch_size, 
-                                 shuffle=False, 
-                                 pin_memory=True,
-                                 num_workers=12,
-                                 persistent_workers=True, 
-                                 prefetch_factor=8)
     device = torch.device("cuda" if torch.cuda.is_available() else 'cpu')
 
     # model = Model()
 
-    model = VSSM3D()
+    model = create_medmamba3d_tiny(num_classes=num_classes)
     model.to(device)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay )
@@ -110,7 +106,7 @@ def main():
     weights_cls = (counts.max() / counts) ** 0.5   # 开平方降温
     weights_cls = weights_cls / weights_cls.mean()
     class_weights = torch.tensor(weights_cls.values, dtype=torch.float32, device=device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights)
+    criterion = nn.CrossEntropyLoss()
 
     print("\nCONFIGURATION")
     print(f"  {'Batch size':18}: {batch_size}")
@@ -124,14 +120,14 @@ def main():
     trainer = Trainer(model, optimizer, criterion, device)                                      
 
     warmup_epochs = 5
-    num_epochs = 500
+    num_epochs = 200
     scheduler = torch.optim.lr_scheduler.LambdaLR(
         optimizer,
         lr_lambda=lambda epoch: warmup_cosine(warmup_epochs, num_epochs, epoch)
     )
-    best_val_loss = float('inf')
+    best_auc = float('-inf')
     early_stop = 0
-    patience = 10
+    patience = 20
 
     print("\n" + "-"*60)
     print(f"{'TRAINING STARTED':^60}")
@@ -155,43 +151,45 @@ def main():
         
         train_loss = trainer.train(train_dataloader)
         val_loss = trainer.validate(val_dataloader)
+        if epoch % 5 == 0:
+            accuracy, auc, sensitivity, specificity, f1, precision, mcc = evaluate_model(model, val_dataloader, device, verbose=True)
+        else:
+            accuracy, auc, sensitivity, specificity, f1, precision, mcc = evaluate_model(model, val_dataloader, device, verbose=False)
         scheduler.step()
 
         epoch_time = time.time() - epoch_start
-        print(f"  Train loss: {train_loss:.4f}   Val loss: {val_loss:.4f}   Time: {str(timedelta(seconds=int(epoch_time)))}")
+        print(f"  Train loss: {train_loss:.4f}   Val loss: {val_loss:.4f}   Val AUC: {auc:.4f}   Time: {str(timedelta(seconds=int(epoch_time)))}")
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if auc > best_auc:
+            best_auc = auc
             save_dir = 'assets/checkpoints_3d'
+            os.makedirs(save_dir, exist_ok=True)
             save_path = os.path.join(save_dir, 'best_model.pth')
             torch.save(model.state_dict(), save_path)
-            print(f"  Weights updated!")
+            print(f"  Weights updated! Best AUC: {best_auc:.4f}")
             early_stop = 0
         else:
             early_stop += 1
             print(f"  Early stopping count: {early_stop}/{patience}")
-            # if early_stop == patience:
-            #     print(f"  Early stopping triggered at epoch {epoch + 1}.")
-            #     print(f"  Best model saved as: best_model.pth")
-            #     break
-        
-        if epoch % 5 == 0:
-            accuracy, auc, sensitivity, specificity, f1, mcc = evaluate_model(model, test_dataloader, device, verbose=True)
-        else:
-            accuracy, auc, sensitivity, specificity, f1, mcc = evaluate_model(model, test_dataloader, device, verbose=False)
+            if early_stop == patience:
+                print(f"  Early stopping triggered at epoch {epoch + 1}.")
+                print(f"  Best model saved as: best_model.pth")
+                break
+
         swanlab.log({"train_loss":train_loss,
                     "val_loss": val_loss, 
                     "acc":accuracy,
                     "auc":auc, 
                     "sensitivity":sensitivity, 
                     "specificity":specificity, 
-                    "f1":f1, 
+                    "f1":f1,
+                    "precision":precision, 
                     "mcc":mcc} 
         )
     total_time = time.time() - start_time
     print("\n" + "="*60)
     print(f"Training completed in {str(timedelta(seconds=int(total_time)))}")
-    print(f"Best validation loss: {best_val_loss:.4f}")
+    print(f"Best validation AUC: {best_auc:.4f}")
     print("="*60 + "\n")
     swanlab.finish()
                 

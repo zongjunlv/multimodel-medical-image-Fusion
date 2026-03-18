@@ -158,7 +158,6 @@ class VSS3DLayer(nn.Module):
     def _init_weights(self, module: nn.Module):
         for name, p in module.named_parameters():
             if name in ["out_proj.weight"]:
-                p = p.clone().detach_()
                 nn.init.kaiming_uniform_(p, a=math.sqrt(5))
 
     def forward(self, x):
